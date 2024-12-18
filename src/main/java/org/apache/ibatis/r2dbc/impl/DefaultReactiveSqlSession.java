@@ -46,8 +46,7 @@ public class DefaultReactiveSqlSession implements ReactiveSqlSession {
 
     private void registerTypeHandlers(Configuration configuration) {
         for (TypeHandler<?> typeHandler : configuration.getTypeHandlerRegistry().getTypeHandlers()) {
-            if (typeHandler instanceof R2DBCTypeHandler) {
-                R2DBCTypeHandler<?> r2DBCTypeHandler = (R2DBCTypeHandler<?>) typeHandler;
+            if (typeHandler instanceof R2DBCTypeHandler<?> r2DBCTypeHandler) {
                 typeHandlerRegistry.register(r2DBCTypeHandler);
             }
         }
@@ -62,7 +61,7 @@ public class DefaultReactiveSqlSession implements ReactiveSqlSession {
             if (parameter != null) {
                 fillParams(statement, boundSql, parameter);
             }
-            ResultMap resultMap = mappedStatement.getResultMaps().get(0);
+            ResultMap resultMap = mappedStatement.getResultMaps().getFirst();
             return executeFluxStatement(connection, statement)
                     .flatMap(result -> result.map((row, rowMetadata) -> (T) convertRowToResult(row, rowMetadata, resultMap)))
                     .singleOrEmpty()
@@ -84,7 +83,7 @@ public class DefaultReactiveSqlSession implements ReactiveSqlSession {
             if (parameter != null) {
                 fillParams(statement, boundSql, parameter);
             }
-            ResultMap resultMap = mappedStatement.getResultMaps().get(0);
+            ResultMap resultMap = mappedStatement.getResultMaps().getFirst();
             return executeFluxStatement(connection, statement)
                     .flatMap(result -> result.map((row, rowMetadata) -> (T) convertRowToResult(row, rowMetadata, resultMap)));
         });
@@ -97,7 +96,7 @@ public class DefaultReactiveSqlSession implements ReactiveSqlSession {
 
     @Override
     public <T> Flux<T> select(String statementId, Object parameter, RowBounds rowBounds) {
-        return (Flux<T>) select(statementId, parameter).skip(rowBounds.getOffset()).limitRequest(rowBounds.getLimit());
+        return (Flux<T>) select(statementId, parameter).skip(rowBounds.getOffset()).take(rowBounds.getLimit());
     }
 
     @Override
@@ -128,7 +127,7 @@ public class DefaultReactiveSqlSession implements ReactiveSqlSession {
                             }));
                         }
                     });
-        });
+        }).map(o -> Integer.valueOf(o.toString()));
         if (metricsEnabled) {
             return rowsUpdated.name(statementId).metrics();
         } else {
@@ -152,7 +151,7 @@ public class DefaultReactiveSqlSession implements ReactiveSqlSession {
             }
             return executeMonoStatement(connection, statement)
                     .flatMap(result -> Mono.from(result.getRowsUpdated()));
-        });
+        }).map(o -> Integer.valueOf(o.toString()));
         if (metricsEnabled) {
             return updatedRows.name(statementId).metrics();
         } else {
@@ -262,21 +261,23 @@ public class DefaultReactiveSqlSession implements ReactiveSqlSession {
                     resultMetaObject.setValue(resultMapping.getProperty(), columnValue);
                 }
             } else {
-                rowMetadata.getColumnNames().forEach(column -> {
-                    Object columnValue = row.get(column);
-                    resultMetaObject.setValue(column, columnValue);
+                rowMetadata.getColumnMetadatas().forEach(column -> {
+                    Object columnValue = row.get(column.getName());
+                    resultMetaObject.setValue(column.getName(), columnValue);
                 });
             }
             return object;
         } else if (type.isAssignableFrom(Map.class)) {
             Map<String, Object> result = new HashMap<>();
-            for (String columnName : rowMetadata.getColumnNames()) {
+            for (ColumnMetadata columnMetadata : rowMetadata.getColumnMetadatas()) {
+                String columnName = columnMetadata.getName();
                 result.put(columnName, row.get(columnName));
             }
             return result;
         } else if (type.isAssignableFrom(Collection.class)) {
             List<Object> result = new ArrayList<>();
-            for (String columnName : rowMetadata.getColumnNames()) {
+            for (ColumnMetadata columnMetadata : rowMetadata.getColumnMetadatas()) {
+                String columnName = columnMetadata.getName();
                 result.add(row.get(columnName));
             }
             return result;
